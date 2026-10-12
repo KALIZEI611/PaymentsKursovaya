@@ -5,6 +5,9 @@ import { usePaymentsStore } from "../stores/payments";
 const store = usePaymentsStore();
 const error = ref<string | null>(null);
 const success = ref<string | null>(null);
+const toastVisible = ref(false);
+const submitting = ref(false);
+let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
 const form = reactive({
   contract_id: 0 as number,
@@ -38,13 +41,29 @@ const fmt = (n: number) =>
 async function submit() {
   error.value = null;
   success.value = null;
+  submitting.value = true;
+
+  const paidAmount = form.amount;
+  const contractNumber = selected.value?.number ?? "";
+
   try {
     await store.addPayment({ ...form });
-    success.value = `Платёж зарегистрирован: ${fmt(form.amount)}`;
+
+    success.value = `Платёж ${fmt(paidAmount)} по договору ${contractNumber} успешно зарегистрирован`;
+    toastVisible.value = true;
+
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      toastVisible.value = false;
+      success.value = null;
+    }, 5000);
+
     form.amount = 0;
     form.comment = "";
   } catch (e: any) {
     error.value = e.message ?? "Не удалось сохранить платёж";
+  } finally {
+    submitting.value = false;
   }
 }
 </script>
@@ -56,6 +75,23 @@ async function submit() {
       <div class="subtitle">Операция фиксируется в журнале платежей</div>
     </div>
   </section>
+
+  <!-- Тост вынесен в body, чтобы никакие родительские стили не мешали -->
+  <Teleport to="body">
+    <transition name="toast">
+      <div v-if="toastVisible && success" class="toast toast-success">
+        <span class="toast-icon">✓</span>
+        <span class="toast-text">{{ success }}</span>
+        <button
+          class="toast-close"
+          @click="toastVisible = false"
+          aria-label="Закрыть"
+        >
+          ×
+        </button>
+      </div>
+    </transition>
+  </Teleport>
 
   <form class="form" @submit.prevent="submit">
     <div class="form-row">
@@ -107,9 +143,10 @@ async function submit() {
     </div>
 
     <div class="form-actions">
-      <button class="btn primary" type="submit">Провести платёж</button>
+      <button class="btn primary" type="submit" :disabled="submitting">
+        {{ submitting ? "Сохранение…" : "Провести платёж" }}
+      </button>
       <span v-if="error" class="form-error">{{ error }}</span>
-      <span v-if="success" class="form-success">{{ success }}</span>
     </div>
   </form>
 </template>
@@ -195,9 +232,68 @@ async function submit() {
   color: #8a1f1f;
   letter-spacing: 0.01em;
 }
-.form-success {
-  font-size: 12px;
+</style>
+
+<!-- Глобальные стили тоста: без scoped, чтобы применились к элементу в body -->
+<style>
+.toast {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 320px;
+  max-width: 520px;
+  padding: 14px 18px;
+  border: 1px solid #9ab8a3;
+  background: #eef5f0;
   color: #1c4a2a;
-  letter-spacing: 0.01em;
+  font-family: "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+.toast-icon {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #2b6b3f;
+  color: #fff;
+  font-weight: 700;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.toast-text {
+  flex: 1;
+  line-height: 1.4;
+}
+.toast-close {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: #1c4a2a;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  opacity: 0.6;
+}
+.toast-close:hover {
+  opacity: 1;
+}
+
+.toast-enter-active,
+.toast-leave-active {
+  transition:
+    opacity 0.25s ease,
+    transform 0.25s ease;
+}
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translateX(20px);
 }
 </style>

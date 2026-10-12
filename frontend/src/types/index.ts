@@ -1,3 +1,17 @@
+export interface User {
+  id: number;
+  email: string;
+  full_name: string;
+}
+
+export interface LoginResponse {
+  success: boolean;
+  user_id: number | null;
+  user_email: string | null;
+  user_name: string | null;
+  message: string;
+}
+
 export interface Contract {
   id: number;
   number: string;

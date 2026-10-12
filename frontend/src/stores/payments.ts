@@ -29,9 +29,9 @@ export const usePaymentsStore = defineStore("payments", {
           api.get<Payment[]>("/payments?order=paid_at.desc&limit=50"),
           api.get<DebtRow[]>("/v_debt_report"),
         ]);
-        this.contracts = c.data;
-        this.payments = p.data;
-        this.debt = d.data;
+        this.contracts = [...c.data];
+        this.payments = [...p.data];
+        this.debt = [...d.data];
       } catch (e: any) {
         this.error = e?.message ?? "Ошибка загрузки";
       } finally {
@@ -45,12 +45,10 @@ export const usePaymentsStore = defineStore("payments", {
       method: "bank" | "card" | "cash";
       comment?: string;
     }) {
-      // Валидация на фронте
       if (!payload.contract_id) throw new Error("Выберите договор");
       if (!Number.isFinite(payload.amount) || payload.amount <= 0)
         throw new Error("Сумма должна быть положительным числом");
 
-      // Дополнительная проверка: переплата
       const contract = this.contracts.find((c) => c.id === payload.contract_id);
       if (!contract) throw new Error("Договор не найден");
 
@@ -73,8 +71,17 @@ export const usePaymentsStore = defineStore("payments", {
         comment: payload.comment ?? null,
       });
 
-      await this.loadAll();
-      return res.data[0];
+      const created = res.data[0];
+
+      // Оптимистично добавляем в стор, чтобы UI обновился мгновенно
+      if (created) {
+        this.payments = [created, ...this.payments];
+      }
+
+      // Фоновое обновление — НЕ блокирует UI, без await
+      this.loadAll().catch(() => {});
+
+      return created;
     },
 
     async addContract(payload: {
@@ -88,8 +95,43 @@ export const usePaymentsStore = defineStore("payments", {
       if (!Number.isFinite(payload.amount) || payload.amount <= 0)
         throw new Error("Сумма договора должна быть положительной");
 
-      await api.post("/contracts", { ...payload, status: "active" });
-      await this.loadAll();
+      try {
+        const res = await api.post<Contract[]>("/contracts", {
+          ...payload,
+          status: "active",
+        });
+
+        const created = res.data[0];
+        if (created) {
+          this.contracts = [...this.contracts, created];
+        }
+
+        // Фоновое обновление — НЕ блокирует UI
+        this.loadAll().catch(() => {});
+      } catch (e: any) {
+        const status = e?.response?.status;
+        const details = e?.response?.data?.details ?? "";
+        const message = e?.response?.data?.message ?? "";
+
+        // 409 — дубликат номера
+        if (status === 409 || message.includes("duplicate key")) {
+          throw new Error(
+            `Договор с номером "${payload.number}" уже существует. Укажите другой номер.`,
+          );
+        }
+
+        // 400 — прочие ошибки валидации
+        if (status === 400) {
+          if (details.includes("amount")) {
+            throw new Error("Сумма договора должна быть положительной");
+          }
+          throw new Error(details || message || "Некорректные данные договора");
+        }
+
+        throw new Error(
+          message || details || e?.message || "Ошибка сохранения",
+        );
+      }
     },
   },
 });

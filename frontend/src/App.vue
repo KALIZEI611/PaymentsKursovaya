@@ -1,19 +1,48 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onMounted, ref, watch } from "vue";
 import { usePaymentsStore } from "./stores/payments";
+import { useAuthStore } from "./stores/auth";
+import AuthScreen from "./components/AuthScreen.vue";
 import Dashboard from "./components/Dashboard.vue";
 import ContractsList from "./components/ContractsList.vue";
 import PaymentForm from "./components/PaymentForm.vue";
 import DebtReport from "./components/DebtReport.vue";
 
 const store = usePaymentsStore();
-const tab = ref<"dash" | "contracts" | "payment" | "debt">("dash");
+const auth = useAuthStore();
 
-onMounted(() => store.loadAll());
+const tab = ref<"dash" | "contracts" | "payment" | "debt">("dash");
+const initialLoading = ref(false);
+
+onMounted(() => {
+  auth.init();
+});
+
+watch(
+  () => auth.isAuthenticated,
+  async (isAuth) => {
+    if (isAuth) {
+      initialLoading.value = true;
+      await store.loadAll();
+      initialLoading.value = false;
+    } else {
+      store.contracts = [];
+      store.payments = [];
+      store.debt = [];
+    }
+  },
+  { immediate: true },
+);
+
+async function handleLogout() {
+  auth.logout();
+}
 </script>
 
 <template>
-  <div class="app">
+  <AuthScreen v-if="!auth.isAuthenticated" />
+
+  <div v-else class="app">
     <header class="header">
       <div class="brand">
         <span class="brand-mark">A</span>
@@ -25,32 +54,38 @@ onMounted(() => store.loadAll());
         </div>
       </div>
 
-      <nav class="nav">
-        <button :class="{ active: tab === 'dash' }" @click="tab = 'dash'">
-          Обзор
-        </button>
-        <button
-          :class="{ active: tab === 'contracts' }"
-          @click="tab = 'contracts'"
-        >
-          Договоры
-        </button>
-        <button :class="{ active: tab === 'payment' }" @click="tab = 'payment'">
-          Регистрация платежа
-        </button>
-        <button :class="{ active: tab === 'debt' }" @click="tab = 'debt'">
-          Задолженность
-        </button>
-      </nav>
+      <div class="user-box">
+        <div class="user-info">
+          <span class="user-email">{{ auth.user?.email }}</span>
+        </div>
+        <button class="btn" @click="handleLogout">Выйти</button>
+      </div>
     </header>
 
+    <nav class="nav">
+      <button :class="{ active: tab === 'dash' }" @click="tab = 'dash'">
+        Обзор
+      </button>
+      <button
+        :class="{ active: tab === 'contracts' }"
+        @click="tab = 'contracts'"
+      >
+        Договоры
+      </button>
+      <button :class="{ active: tab === 'payment' }" @click="tab = 'payment'">
+        Регистрация платежа
+      </button>
+      <button :class="{ active: tab === 'debt' }" @click="tab = 'debt'">
+        Задолженность
+      </button>
+    </nav>
+
     <main class="content">
-      <div v-if="store.loading" class="state">Загрузка данных…</div>
+      <div v-if="initialLoading" class="state">Загрузка данных…</div>
       <div v-else-if="store.error" class="state state-error">
         <span class="state-label">Ошибка соединения с сервером</span>
         <span class="state-detail">{{ store.error }}</span>
       </div>
-
       <template v-else>
         <Dashboard v-if="tab === 'dash'" />
         <ContractsList v-else-if="tab === 'contracts'" />
@@ -67,7 +102,6 @@ onMounted(() => store.loadAll());
 </template>
 
 <style>
-/* ==== Reset & base ==== */
 * {
   box-sizing: border-box;
 }
@@ -85,8 +119,6 @@ body {
   background: #eceef1;
   -webkit-font-smoothing: antialiased;
 }
-
-/* ==== Layout ==== */
 .app {
   min-height: 100vh;
   display: flex;
@@ -95,8 +127,6 @@ body {
   margin: 0 auto;
   padding: 0 24px 32px;
 }
-
-/* ==== Header ==== */
 .header {
   display: flex;
   align-items: center;
@@ -126,20 +156,28 @@ body {
   font-size: 15px;
   font-weight: 600;
   letter-spacing: 0.02em;
-  color: #1c1f23;
 }
 .brand-sub {
   font-size: 12px;
   color: #6a7079;
-  letter-spacing: 0.01em;
 }
 
-/* ==== Nav ==== */
+.user-box {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.user-email {
+  font-size: 13px;
+  color: #1c1f23;
+}
+
 .nav {
   display: flex;
   gap: 0;
   border: 1px solid #c9cdd3;
   background: #f7f8fa;
+  margin-top: 18px;
 }
 .nav button {
   appearance: none;
@@ -166,7 +204,6 @@ body {
   font-weight: 500;
 }
 
-/* ==== Content ==== */
 .content {
   flex: 1;
   background: #ffffff;
@@ -175,13 +212,11 @@ body {
   margin-top: 20px;
 }
 
-/* ==== States ==== */
 .state {
   padding: 40px 0;
   text-align: center;
   color: #6a7079;
   font-size: 13px;
-  letter-spacing: 0.02em;
 }
 .state-error {
   display: flex;
@@ -191,14 +226,12 @@ body {
 }
 .state-label {
   font-weight: 600;
-  letter-spacing: 0.02em;
 }
 .state-detail {
   font-size: 12px;
   color: #a44;
 }
 
-/* ==== Shared table ==== */
 table {
   width: 100%;
   border-collapse: collapse;
@@ -228,7 +261,6 @@ tbody tr:hover {
   font-variant-numeric: tabular-nums;
 }
 
-/* ==== Shared controls ==== */
 .btn {
   appearance: none;
   font-family: inherit;
@@ -270,8 +302,6 @@ textarea:focus {
   border-color: #2b3138;
   box-shadow: 0 0 0 2px rgba(43, 49, 56, 0.08);
 }
-
-/* ==== Footer ==== */
 .footer {
   display: flex;
   justify-content: space-between;
