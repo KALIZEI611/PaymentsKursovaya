@@ -96,7 +96,7 @@ async function handleLogout() {
 
     <footer class="footer">
       <span>PostgreSQL · PostgREST · Vue 3 · TypeScript</span>
-      <span>© 2024 Учёт платежей</span>
+      <span>© 2026 Учёт платежей</span>
     </footer>
   </div>
 </template>

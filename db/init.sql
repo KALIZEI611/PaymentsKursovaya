@@ -1,4 +1,12 @@
 -- ============================================
+-- ОЧИСТКА СТАРЫХ ТАБЛИЦ (если есть)
+-- ============================================
+DROP TABLE IF EXISTS payments CASCADE;
+DROP TABLE IF EXISTS contracts CASCADE;
+DROP TABLE IF EXISTS users CASCADE;
+DROP VIEW IF EXISTS v_debt_report;
+
+-- ============================================
 -- Расширения
 -- ============================================
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -17,7 +25,7 @@ GRANT USAGE ON SCHEMA public TO web_anon;
 -- ============================================
 -- Таблица пользователей
 -- ============================================
-CREATE TABLE IF NOT EXISTS users (
+CREATE TABLE users (
     id              BIGSERIAL PRIMARY KEY,
     email           VARCHAR(255) NOT NULL UNIQUE,
     password_hash   TEXT         NOT NULL,
@@ -28,7 +36,7 @@ CREATE TABLE IF NOT EXISTS users (
 -- ============================================
 -- Таблица договоров
 -- ============================================
-CREATE TABLE IF NOT EXISTS contracts (
+CREATE TABLE contracts (
     id              SERIAL PRIMARY KEY,
     number          VARCHAR(50)  NOT NULL UNIQUE,
     client_name     VARCHAR(200) NOT NULL,
@@ -39,12 +47,47 @@ CREATE TABLE IF NOT EXISTS contracts (
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_contracts_status ON contracts(status);
+CREATE INDEX idx_contracts_status ON contracts(status);
+
+-- ============================================
+-- Функция и триггер для генерации номера
+-- ============================================
+CREATE OR REPLACE FUNCTION generate_contract_number()
+RETURNS VARCHAR
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_year TEXT := '2026';
+    v_next_id INT;
+    v_new_number VARCHAR;
+BEGIN
+    SELECT nextval(pg_get_serial_sequence('contracts', 'id')) INTO v_next_id;
+    v_new_number := 'Д-' || v_year || '-' || lpad(v_next_id::TEXT, 3, '0');
+    RETURN v_new_number;
+END;
+$$;
+
+ALTER TABLE contracts ALTER COLUMN number SET DEFAULT generate_contract_number();
+
+CREATE OR REPLACE FUNCTION set_contract_number()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.number IS NULL THEN
+        NEW.number := generate_contract_number();
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_set_contract_number ON contracts;
+CREATE TRIGGER trg_set_contract_number
+BEFORE INSERT ON contracts
+FOR EACH ROW EXECUTE FUNCTION set_contract_number();
 
 -- ============================================
 -- Таблица платежей
 -- ============================================
-CREATE TABLE IF NOT EXISTS payments (
+CREATE TABLE payments (
     id              BIGSERIAL PRIMARY KEY,
     contract_id     INTEGER      NOT NULL REFERENCES contracts(id) ON DELETE RESTRICT,
     amount          NUMERIC(14,2) NOT NULL CHECK (amount > 0),
@@ -54,13 +97,12 @@ CREATE TABLE IF NOT EXISTS payments (
     comment         TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_payments_contract ON payments(contract_id);
-CREATE INDEX IF NOT EXISTS idx_payments_paid_at  ON payments(paid_at DESC);
+CREATE INDEX idx_payments_contract ON payments(contract_id);
+CREATE INDEX idx_payments_paid_at  ON payments(paid_at DESC);
 
 -- ============================================
 -- Представление задолженности
 -- ============================================
-DROP VIEW IF EXISTS v_debt_report;
 CREATE VIEW v_debt_report AS
 SELECT
     c.id             AS contract_id,
@@ -78,8 +120,6 @@ ORDER BY debt DESC;
 -- ============================================
 -- Функция регистрации
 -- ============================================
-DROP FUNCTION IF EXISTS register(TEXT, TEXT, TEXT);
-
 CREATE OR REPLACE FUNCTION register(
     p_email     TEXT,
     p_password  TEXT,
@@ -120,8 +160,6 @@ $$;
 -- ============================================
 -- Функция входа
 -- ============================================
-DROP FUNCTION IF EXISTS login(TEXT, TEXT);
-
 CREATE OR REPLACE FUNCTION login(
     p_email    TEXT,
     p_password TEXT
@@ -145,33 +183,21 @@ BEGIN
 
     IF NOT FOUND THEN
         RETURN QUERY
-        SELECT
-            false::BOOLEAN,
-            NULL::BIGINT,
-            NULL::TEXT,
-            NULL::TEXT,
-            'Неверный email или пароль'::TEXT;
+        SELECT false::BOOLEAN, NULL::BIGINT, NULL::TEXT, NULL::TEXT,
+               'Неверный email или пароль'::TEXT;
         RETURN;
     END IF;
 
     IF v_user.password_hash <> crypt(p_password, v_user.password_hash) THEN
         RETURN QUERY
-        SELECT
-            false::BOOLEAN,
-            NULL::BIGINT,
-            NULL::TEXT,
-            NULL::TEXT,
-            'Неверный email или пароль'::TEXT;
+        SELECT false::BOOLEAN, NULL::BIGINT, NULL::TEXT, NULL::TEXT,
+               'Неверный email или пароль'::TEXT;
         RETURN;
     END IF;
 
     RETURN QUERY
-    SELECT
-        true::BOOLEAN,
-        v_user.id::BIGINT,
-        v_user.email::TEXT,
-        v_user.full_name::TEXT,
-        'Вход выполнен'::TEXT;
+    SELECT true::BOOLEAN, v_user.id::BIGINT, v_user.email::TEXT,
+           v_user.full_name::TEXT, 'Вход выполнен'::TEXT;
 END;
 $$;
 
@@ -196,29 +222,27 @@ VALUES (
     'demo@example.com',
     crypt('demo1234', gen_salt('bf', 10)),
     'Демо Пользователь'
-)
-ON CONFLICT (email) DO NOTHING;
+);
 
 -- ============================================
 -- Тестовые договоры
 -- ============================================
-INSERT INTO contracts (number, client_name, amount, signed_date, status) VALUES
-('Д-2024-001', 'ООО "Ромашка"',  150000.00, '2024-01-15', 'active'),
-('Д-2024-002', 'ИП Иванов И.И.',  80000.00, '2024-02-01', 'active'),
-('Д-2024-003', 'АО "Вектор"',    320000.00, '2024-02-20', 'active')
-ON CONFLICT (number) DO NOTHING;
+INSERT INTO contracts (client_name, amount, signed_date, status) VALUES
+('ООО "Ромашка"',  150000.00, '2026-01-15', 'active'),
+('ИП Иванов И.И.',  80000.00, '2026-02-01', 'active'),
+('АО "Вектор"',    320000.00, '2026-02-20', 'active');
 
 -- ============================================
--- Тестовые платежи
+-- Тестовые платежи (Динамическая привязка)
 -- ============================================
 INSERT INTO payments (contract_id, amount, method, comment)
-SELECT 1, 50000.00, 'bank', 'Первая оплата'
-WHERE NOT EXISTS (SELECT 1 FROM payments WHERE contract_id = 1 AND amount = 50000.00);
+SELECT id, 50000.00, 'bank', 'Первая оплата'
+FROM contracts WHERE client_name = 'ООО "Ромашка"' LIMIT 1;
 
 INSERT INTO payments (contract_id, amount, method, comment)
-SELECT 1, 30000.00, 'card', 'Вторая оплата'
-WHERE NOT EXISTS (SELECT 1 FROM payments WHERE contract_id = 1 AND amount = 30000.00);
+SELECT id, 30000.00, 'card', 'Вторая оплата'
+FROM contracts WHERE client_name = 'ООО "Ромашка"' LIMIT 1;
 
 INSERT INTO payments (contract_id, amount, method, comment)
-SELECT 2, 80000.00, 'bank', 'Полная оплата'
-WHERE NOT EXISTS (SELECT 1 FROM payments WHERE contract_id = 2 AND amount = 80000.00);
+SELECT id, 80000.00, 'bank', 'Полная оплата'
+FROM contracts WHERE client_name = 'ИП Иванов И.И.' LIMIT 1;

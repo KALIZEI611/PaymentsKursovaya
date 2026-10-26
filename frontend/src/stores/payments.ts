@@ -72,32 +72,29 @@ export const usePaymentsStore = defineStore("payments", {
       });
 
       const created = res.data[0];
-
-      // Оптимистично добавляем в стор, чтобы UI обновился мгновенно
       if (created) {
         this.payments = [created, ...this.payments];
       }
 
-      // Фоновое обновление — НЕ блокирует UI, без await
       this.loadAll().catch(() => {});
-
       return created;
     },
 
     async addContract(payload: {
-      number: string;
       client_name: string;
       amount: number;
       signed_date: string;
     }) {
-      if (!payload.number.trim()) throw new Error("Номер договора обязателен");
       if (!payload.client_name.trim()) throw new Error("Клиент обязателен");
       if (!Number.isFinite(payload.amount) || payload.amount <= 0)
         throw new Error("Сумма договора должна быть положительной");
 
       try {
+        // ОТПРАВЛЯЕМ СТРОГО ТОЛЬКО ЭТИ ПОЛЯ
         const res = await api.post<Contract[]>("/contracts", {
-          ...payload,
+          client_name: payload.client_name,
+          amount: payload.amount,
+          signed_date: payload.signed_date,
           status: "active",
         });
 
@@ -105,32 +102,41 @@ export const usePaymentsStore = defineStore("payments", {
         if (created) {
           this.contracts = [...this.contracts, created];
         }
-
-        // Фоновое обновление — НЕ блокирует UI
         this.loadAll().catch(() => {});
       } catch (e: any) {
         const status = e?.response?.status;
         const details = e?.response?.data?.details ?? "";
         const message = e?.response?.data?.message ?? "";
 
-        // 409 — дубликат номера
         if (status === 409 || message.includes("duplicate key")) {
-          throw new Error(
-            `Договор с номером "${payload.number}" уже существует. Укажите другой номер.`,
-          );
+          throw new Error(`Ошибка: договор с таким номером уже существует.`);
         }
-
-        // 400 — прочие ошибки валидации
         if (status === 400) {
           if (details.includes("amount")) {
             throw new Error("Сумма договора должна быть положительной");
           }
           throw new Error(details || message || "Некорректные данные договора");
         }
-
         throw new Error(
           message || details || e?.message || "Ошибка сохранения",
         );
+      }
+    },
+
+    async closeContract(id: number) {
+      try {
+        const res = await api.patch<Contract[]>(`/contracts?id=eq.${id}`, {
+          status: "closed",
+        });
+        const updated = res.data[0];
+        if (updated) {
+          this.contracts = this.contracts.map((c) =>
+            c.id === id ? updated : c,
+          );
+        }
+        this.loadAll().catch(() => {});
+      } catch (e: any) {
+        throw new Error("Не удалось закрыть договор");
       }
     },
   },

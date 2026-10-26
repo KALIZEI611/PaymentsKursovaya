@@ -76,7 +76,6 @@ async function submit() {
     </div>
   </section>
 
-  <!-- Тост вынесен в body, чтобы никакие родительские стили не мешали -->
   <Teleport to="body">
     <transition name="toast">
       <div v-if="toastVisible && success" class="toast toast-success">
@@ -93,62 +92,68 @@ async function submit() {
     </transition>
   </Teleport>
 
-  <form class="form" @submit.prevent="submit">
-    <div class="form-row">
-      <label class="field field-wide">
-        <span>Договор</span>
-        <select v-model.number="form.contract_id" required>
-          <option :value="0" disabled>— выберите договор —</option>
-          <option v-for="c in activeContracts" :key="c.id" :value="c.id">
-            {{ c.number }} — {{ c.client_name }}
-          </option>
-        </select>
-      </label>
+  <!-- Центрирующий контейнер -->
+  <div class="form-container">
+    <form class="form" @submit.prevent="submit">
+      <div class="form-row">
+        <label class="field field-wide">
+          <span>Договор</span>
+          <select v-model.number="form.contract_id" required>
+            <option :value="0" disabled>— выберите договор —</option>
+            <option v-for="c in activeContracts" :key="c.id" :value="c.id">
+              {{ c.number }} — {{ c.client_name }}
+            </option>
+          </select>
+        </label>
 
-      <label class="field">
-        <span>Сумма, ₽</span>
-        <input
-          v-model.number="form.amount"
-          type="number"
-          min="0.01"
-          step="0.01"
-          required
-        />
-      </label>
+        <label class="field">
+          <span>Сумма, ₽</span>
+          <input
+            v-model.number="form.amount"
+            type="number"
+            min="0.01"
+            step="0.01"
+            required
+          />
+        </label>
 
-      <label class="field">
-        <span>Способ оплаты</span>
-        <select v-model="form.method">
-          <option value="bank">Банковский перевод</option>
-          <option value="card">Платёжная карта</option>
-          <option value="cash">Наличные</option>
-        </select>
-      </label>
+        <label class="field">
+          <span>Способ оплаты</span>
+          <select v-model="form.method">
+            <option value="bank">Банковский перевод</option>
+            <option value="card">Платёжная карта</option>
+            <option value="cash">Наличные</option>
+          </select>
+        </label>
 
-      <label class="field field-wide">
-        <span>Комментарий</span>
-        <input v-model="form.comment" placeholder="Основание, № п/п и т. п." />
-      </label>
-    </div>
-
-    <div v-if="selected" class="info">
-      <div class="info-item">
-        <span class="info-label">Сумма договора</span>
-        <span class="info-value">{{ fmt(Number(selected.amount)) }}</span>
+        <label class="field field-wide">
+          <span>Комментарий</span>
+          <input
+            v-model="form.comment"
+            placeholder="Основание, № п/п и т. п."
+          />
+        </label>
       </div>
-      <div class="info-item">
-        <span class="info-label">Остаток к оплате</span>
-        <span class="info-value">{{ fmt(remaining) }}</span>
-      </div>
-    </div>
 
-    <div class="form-actions">
-      <button class="btn primary" type="submit" :disabled="submitting">
-        {{ submitting ? "Сохранение…" : "Провести платёж" }}
-      </button>
-      <span v-if="error" class="form-error">{{ error }}</span>
-    </div>
-  </form>
+      <div v-if="selected" class="info">
+        <div class="info-item">
+          <span class="info-label">Сумма договора</span>
+          <span class="info-value">{{ fmt(Number(selected.amount)) }}</span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">Остаток к оплате</span>
+          <span class="info-value">{{ fmt(remaining) }}</span>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <button class="btn primary full" type="submit" :disabled="submitting">
+          {{ submitting ? "Сохранение…" : "Провести платёж" }}
+        </button>
+        <span v-if="error" class="form-error">{{ error }}</span>
+      </div>
+    </form>
+  </div>
 </template>
 
 <style scoped>
@@ -156,6 +161,7 @@ async function submit() {
   padding-bottom: 14px;
   border-bottom: 1px solid #e3e6ea;
   margin-bottom: 22px;
+  text-align: center; /* Центрируем заголовок */
 }
 .title {
   margin: 0 0 4px;
@@ -169,11 +175,19 @@ async function submit() {
   color: #6a7079;
 }
 
+/* Центрируем саму форму */
+.form-container {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  padding-bottom: 40px;
+}
 .form {
   border: 1px solid #d7dbe0;
   background: #f7f8fa;
-  padding: 22px 24px;
-  max-width: 760px;
+  padding: 28px 32px;
+  width: 100%;
+  max-width: 600px; /* Ограничиваем ширину, чтобы было аккуратно */
 }
 .form-row {
   display: grid;
@@ -198,7 +212,7 @@ async function submit() {
 .info {
   display: flex;
   gap: 32px;
-  margin-top: 20px;
+  margin-top: 24px;
   padding: 14px 16px;
   border: 1px solid #d7dbe0;
   background: #ffffff;
@@ -223,19 +237,23 @@ async function submit() {
 
 .form-actions {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 16px;
-  margin-top: 20px;
+  gap: 12px;
+  margin-top: 24px;
+}
+.btn.full {
+  width: 100%;
 }
 .form-error {
   font-size: 12px;
   color: #8a1f1f;
-  letter-spacing: 0.01em;
+  text-align: center;
 }
 </style>
 
-<!-- Глобальные стили тоста: без scoped, чтобы применились к элементу в body -->
 <style>
+/* Стили тоста (без scoped) */
 .toast {
   position: fixed;
   top: 24px;

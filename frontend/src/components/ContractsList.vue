@@ -1,13 +1,17 @@
 <script setup lang="ts">
-import { reactive, ref } from "vue";
+import { reactive, ref, computed } from "vue";
 import { usePaymentsStore } from "../stores/payments";
+import type { Contract } from "../types";
 
 const store = usePaymentsStore();
 const showForm = ref(false);
 const error = ref<string | null>(null);
 
+// Состояние для модального окна
+const selectedContract = ref<Contract | null>(null);
+const isClosing = ref(false);
+
 const form = reactive({
-  number: "",
   client_name: "",
   amount: 0,
   signed_date: new Date().toISOString().slice(0, 10),
@@ -22,13 +26,49 @@ const fmt = (n: number) =>
 async function submit() {
   error.value = null;
   try {
-    await store.addContract({ ...form });
+    await store.addContract({
+      client_name: form.client_name,
+      amount: form.amount,
+      signed_date: form.signed_date,
+    });
     showForm.value = false;
-    form.number = "";
     form.client_name = "";
     form.amount = 0;
   } catch (e: any) {
     error.value = e.message;
+  }
+}
+
+// Вычисляем платежи для выбранного договора
+const contractPayments = computed(() => {
+  if (!selectedContract.value) return [];
+  return store.payments.filter(
+    (p) => p.contract_id === selectedContract.value?.id,
+  );
+});
+
+const paidTotal = computed(() => {
+  return contractPayments.value.reduce((s, p) => s + Number(p.amount), 0);
+});
+
+const remaining = computed(() => {
+  if (!selectedContract.value) return 0;
+  return Number(selectedContract.value.amount) - paidTotal.value;
+});
+
+// Закрытие договора
+async function handleCloseContract() {
+  if (!selectedContract.value) return;
+  if (!confirm("Вы уверены, что хотите закрыть этот договор?")) return;
+
+  isClosing.value = true;
+  try {
+    await store.closeContract(selectedContract.value.id);
+    selectedContract.value.status = "closed";
+  } catch (e: any) {
+    alert(e.message);
+  } finally {
+    isClosing.value = false;
   }
 }
 </script>
@@ -47,13 +87,10 @@ async function submit() {
   <form v-if="showForm" class="form" @submit.prevent="submit">
     <div class="form-row">
       <label class="field">
-        <span>Номер договора</span>
-        <input v-model="form.number" placeholder="Д-2024-XXX" required />
-      </label>
-      <label class="field">
         <span>Клиент</span>
         <input v-model="form.client_name" placeholder="Наименование" required />
       </label>
+
       <label class="field">
         <span>Сумма, ₽</span>
         <input
@@ -72,6 +109,7 @@ async function submit() {
     <div class="form-actions">
       <button class="btn primary" type="submit">Сохранить</button>
       <span v-if="error" class="form-error">{{ error }}</span>
+      <span class="hint">Номер договора будет присвоен автоматически</span>
     </div>
   </form>
 
@@ -83,6 +121,7 @@ async function submit() {
         <th class="num" style="width: 160px">Сумма</th>
         <th style="width: 140px">Дата</th>
         <th style="width: 120px">Статус</th>
+        <th style="width: 100px; text-align: center">Действия</th>
       </tr>
     </thead>
     <tbody>
@@ -94,12 +133,106 @@ async function submit() {
         <td>
           <span :class="['badge', c.status]">{{ c.status }}</span>
         </td>
+        <td style="text-align: center">
+          <button class="btn-sm" @click="selectedContract = c">Детали</button>
+        </td>
       </tr>
       <tr v-if="!store.contracts.length">
-        <td colspan="5" class="empty">Договоры не найдены</td>
+        <td colspan="6" class="empty">Договоры не найдены</td>
       </tr>
     </tbody>
   </table>
+
+  <!-- МОДАЛЬНОЕ ОКНО ДЕТАЛЕЙ ДОГОВОРА -->
+  <Teleport to="body">
+    <div
+      v-if="selectedContract"
+      class="modal-backdrop"
+      @click.self="selectedContract = null"
+    >
+      <div class="modal">
+        <div class="modal-header">
+          <h3>Договор {{ selectedContract.number }}</h3>
+          <button class="close-btn" @click="selectedContract = null">×</button>
+        </div>
+
+        <div class="modal-body">
+          <div class="detail-row">
+            <span class="label">Клиент:</span>
+            <span class="value">{{ selectedContract.client_name }}</span>
+          </div>
+          <div class="detail-row">
+            <span class="label">Дата подписания:</span>
+            <span class="value">{{
+              new Date(selectedContract.signed_date).toLocaleDateString("ru-RU")
+            }}</span>
+          </div>
+          <div class="detail-row">
+            <span class="label">Сумма договора:</span>
+            <span class="value">{{
+              fmt(Number(selectedContract.amount))
+            }}</span>
+          </div>
+          <div class="detail-row">
+            <span class="label">Статус:</span>
+            <span :class="['badge', selectedContract.status]">{{
+              selectedContract.status
+            }}</span>
+          </div>
+
+          <div class="divider"></div>
+
+          <h4>История платежей</h4>
+          <div v-if="contractPayments.length" class="payments-list">
+            <div v-for="p in contractPayments" :key="p.id" class="payment-item">
+              <div class="p-left">
+                <span class="p-date">{{
+                  new Date(p.paid_at).toLocaleString("ru-RU")
+                }}</span>
+                <span class="p-method">{{ p.method }}</span>
+              </div>
+              <div class="p-right">
+                <span class="p-amount">{{ fmt(Number(p.amount)) }}</span>
+              </div>
+            </div>
+          </div>
+          <div v-else class="empty-small">Платежей пока нет</div>
+
+          <div class="summary">
+            <div class="detail-row">
+              <span class="label">Оплачено:</span>
+              <span class="value">{{ fmt(paidTotal) }}</span>
+            </div>
+            <div class="detail-row">
+              <span class="label">Остаток:</span>
+              <span class="value" :class="{ 'text-red': remaining > 0 }">{{
+                fmt(remaining)
+              }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <!-- Кнопка закрытия договора (слева) -->
+          <button
+            v-if="selectedContract.status === 'active'"
+            class="btn primary"
+            style="background: #8a1f1f; border-color: #8a1f1f"
+            :disabled="isClosing"
+            @click="handleCloseContract"
+          >
+            {{ isClosing ? "Закрываем…" : "Закрыть договор" }}
+          </button>
+          <div v-else></div>
+
+          <!-- Кнопка закрытия окна (справа) -->
+          <button class="btn" @click="selectedContract = null">
+            Закрыть окно
+          </button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -158,6 +291,11 @@ async function submit() {
   color: #8a1f1f;
   letter-spacing: 0.01em;
 }
+.hint {
+  font-size: 12px;
+  color: #6a7079;
+  font-style: italic;
+}
 
 .mono {
   font-variant-numeric: tabular-nums;
@@ -193,5 +331,149 @@ async function submit() {
   color: #6a7079;
   padding: 24px 0;
   font-size: 12px;
+}
+
+.btn-sm {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  background: #ffffff;
+  border: 1px solid #c9cdd3;
+  color: #2b3138;
+  cursor: pointer;
+}
+.btn-sm:hover {
+  background: #f0f1f3;
+}
+
+/* Модальное окно */
+.modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(28, 31, 35, 0.5);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.modal {
+  background: #ffffff;
+  width: 100%;
+  max-width: 600px;
+  border: 1px solid #2b3138;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  font-family: "Inter", "Segoe UI", sans-serif;
+  font-size: 13px;
+  color: #1c1f23;
+}
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid #d7dbe0;
+  background: #f4f5f7;
+}
+.modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.close-btn {
+  background: none;
+  border: none;
+  font-size: 24px;
+  line-height: 1;
+  color: #6a7079;
+  cursor: pointer;
+}
+.close-btn:hover {
+  color: #1c1f23;
+}
+.modal-body {
+  padding: 20px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.detail-row .label {
+  color: #6a7079;
+}
+.detail-row .value {
+  font-weight: 500;
+  text-align: right;
+}
+.divider {
+  height: 1px;
+  background: #e3e6ea;
+  margin: 20px 0;
+}
+.modal-body h4 {
+  margin: 0 0 12px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #4a5058;
+}
+
+.payments-list {
+  border: 1px solid #e3e6ea;
+}
+.payment-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e3e6ea;
+}
+.payment-item:last-child {
+  border-bottom: none;
+}
+.p-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.p-date {
+  font-weight: 500;
+}
+.p-method {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: #6a7079;
+}
+.p-amount {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.empty-small {
+  color: #6a7079;
+  font-style: italic;
+  text-align: center;
+  padding: 16px;
+  background: #f9fafb;
+  border: 1px dashed #d7dbe0;
+}
+.summary {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #e3e6ea;
+}
+.text-red {
+  color: #8a1f1f;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-top: 1px solid #d7dbe0;
+  background: #f4f5f7;
 }
 </style>
