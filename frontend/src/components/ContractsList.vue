@@ -17,6 +17,31 @@ const form = reactive({
   signed_date: new Date().toISOString().slice(0, 10),
 });
 
+// --- ПАГИНАЦИЯ ---
+const currentPage = ref(1);
+const pageSize = 10;
+
+const totalPages = computed(() => {
+  return Math.ceil(store.contracts.length / pageSize) || 1;
+});
+
+// Вычисляем 10 договоров для текущей страницы
+const paginatedContracts = computed(() => {
+  const start = (currentPage.value - 1) * pageSize;
+  const end = start + pageSize;
+  return store.contracts.slice(start, end);
+});
+
+// Кнопки "Назад" и "Вперед"
+function prevPage() {
+  if (currentPage.value > 1) currentPage.value--;
+}
+
+function nextPage() {
+  if (currentPage.value < totalPages.value) currentPage.value++;
+}
+
+// --- ОСТАЛЬНАЯ ЛОГИКА ---
 const fmt = (n: number) =>
   n.toLocaleString("ru-RU", {
     minimumFractionDigits: 2,
@@ -34,12 +59,12 @@ async function submit() {
     showForm.value = false;
     form.client_name = "";
     form.amount = 0;
+    currentPage.value = 1; // Возвращаемся на первую страницу после добавления
   } catch (e: any) {
     error.value = e.message;
   }
 }
 
-// Вычисляем платежи для выбранного договора
 const contractPayments = computed(() => {
   if (!selectedContract.value) return [];
   return store.payments.filter(
@@ -56,7 +81,6 @@ const remaining = computed(() => {
   return Number(selectedContract.value.amount) - paidTotal.value;
 });
 
-// Закрытие договора
 async function handleCloseContract() {
   if (!selectedContract.value) return;
   if (!confirm("Вы уверены, что хотите закрыть этот договор?")) return;
@@ -125,7 +149,8 @@ async function handleCloseContract() {
       </tr>
     </thead>
     <tbody>
-      <tr v-for="c in store.contracts" :key="c.id">
+      <!-- Выводим paginatedContracts вместо всех store.contracts -->
+      <tr v-for="c in paginatedContracts" :key="c.id">
         <td class="mono">{{ c.number }}</td>
         <td>{{ c.client_name }}</td>
         <td class="num">{{ fmt(Number(c.amount)) }}</td>
@@ -142,6 +167,23 @@ async function handleCloseContract() {
       </tr>
     </tbody>
   </table>
+
+  <!-- БЛОК ПАГИНАЦИИ -->
+  <div v-if="totalPages > 1" class="pagination">
+    <button class="btn" :disabled="currentPage === 1" @click="prevPage">
+      ← Назад
+    </button>
+    <span class="page-info"
+      >Страница {{ currentPage }} из {{ totalPages }}</span
+    >
+    <button
+      class="btn"
+      :disabled="currentPage === totalPages"
+      @click="nextPage"
+    >
+      Вперед →
+    </button>
+  </div>
 
   <!-- МОДАЛЬНОЕ ОКНО ДЕТАЛЕЙ ДОГОВОРА -->
   <Teleport to="body">
@@ -213,7 +255,6 @@ async function handleCloseContract() {
         </div>
 
         <div class="modal-footer">
-          <!-- Кнопка закрытия договора (слева) -->
           <button
             v-if="selectedContract.status === 'active'"
             class="btn primary"
@@ -225,7 +266,6 @@ async function handleCloseContract() {
           </button>
           <div v-else></div>
 
-          <!-- Кнопка закрытия окна (справа) -->
           <button class="btn" @click="selectedContract = null">
             Закрыть окно
           </button>
@@ -344,6 +384,24 @@ async function handleCloseContract() {
 }
 .btn-sm:hover {
   background: #f0f1f3;
+}
+
+/* СТИЛИ ПАГИНАЦИИ */
+.pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 20px;
+  margin-top: 24px;
+}
+.page-info {
+  font-size: 13px;
+  color: #4a5058;
+  font-weight: 500;
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Модальное окно */
