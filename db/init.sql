@@ -39,7 +39,8 @@ CREATE TABLE users (
 CREATE TABLE contracts (
     id              SERIAL PRIMARY KEY,
     number          VARCHAR(50)  NOT NULL UNIQUE,
-    client_name     VARCHAR(200) NOT NULL,
+    client_name     VARCHAR(200) NOT NULL 
+                    CHECK (client_name ~* '^(ООО|ИП|АО|ПАО|ЗАО|ОАО|ФГУП|ГУП|МУП|НКО|АНО|ТСЖ)\s+'),
     amount          NUMERIC(14,2) NOT NULL CHECK (amount > 0),
     signed_date     DATE         NOT NULL,
     status          VARCHAR(20)  NOT NULL DEFAULT 'active'
@@ -99,6 +100,37 @@ CREATE TABLE payments (
 
 CREATE INDEX idx_payments_contract ON payments(contract_id);
 CREATE INDEX idx_payments_paid_at  ON payments(paid_at DESC);
+
+-- ============================================
+-- Триггер: Защита от переплаты (Блокировка строки)
+-- ============================================
+CREATE OR REPLACE FUNCTION check_payment_overpayment()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_contract_amount NUMERIC;
+    v_paid_amount NUMERIC;
+BEGIN
+    SELECT amount INTO v_contract_amount 
+    FROM contracts 
+    WHERE id = NEW.contract_id 
+    FOR UPDATE;
+
+    SELECT COALESCE(SUM(amount), 0) INTO v_paid_amount 
+    FROM payments 
+    WHERE contract_id = NEW.contract_id;
+
+    IF v_paid_amount + NEW.amount > v_contract_amount THEN
+        RAISE EXCEPTION 'Переплата! Остаток по договору: %', (v_contract_amount - v_paid_amount);
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_check_payment_overpayment ON payments;
+CREATE TRIGGER trg_check_payment_overpayment
+BEFORE INSERT ON payments
+FOR EACH ROW EXECUTE FUNCTION check_payment_overpayment();
 
 -- ============================================
 -- Представление задолженности
@@ -233,7 +265,7 @@ INSERT INTO contracts (client_name, amount, signed_date, status) VALUES
 ('АО "Вектор"',    320000.00, '2026-02-20', 'active');
 
 -- ============================================
--- Тестовые платежи (Динамическая привязка)
+-- Тестовые платежи
 -- ============================================
 INSERT INTO payments (contract_id, amount, method, comment)
 SELECT id, 50000.00, 'bank', 'Первая оплата'

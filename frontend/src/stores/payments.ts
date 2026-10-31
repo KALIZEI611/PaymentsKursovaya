@@ -49,35 +49,35 @@ export const usePaymentsStore = defineStore("payments", {
       if (!Number.isFinite(payload.amount) || payload.amount <= 0)
         throw new Error("Сумма должна быть положительным числом");
 
-      const contract = this.contracts.find((c) => c.id === payload.contract_id);
-      if (!contract) throw new Error("Договор не найден");
+      try {
+        const res = await api.post<Payment[]>("/payments", {
+          contract_id: payload.contract_id,
+          amount: payload.amount,
+          method: payload.method,
+          comment: payload.comment ?? null,
+        });
 
-      const already = this.payments
-        .filter((p) => p.contract_id === payload.contract_id)
-        .reduce((s, p) => s + Number(p.amount), 0);
+        const created = res.data[0];
+        if (created) {
+          this.payments = [created, ...this.payments];
+        }
 
-      if (already + payload.amount > Number(contract.amount)) {
-        throw new Error(
-          `Переплата! Остаток по договору: ${
-            Number(contract.amount) - already
-          } ₽`,
-        );
+        this.loadAll().catch(() => {});
+        return created;
+      } catch (e: any) {
+        const dbMessage = e?.response?.data?.message ?? "";
+
+        if (dbMessage.includes("Переплата!")) {
+          this.loadAll().catch(() => {});
+          throw new Error(dbMessage);
+        }
+
+        if (e?.response?.status === 400) {
+          throw new Error("Некорректная сумма платежа");
+        }
+
+        throw new Error("Не удалось сохранить платёж");
       }
-
-      const res = await api.post<Payment[]>("/payments", {
-        contract_id: payload.contract_id,
-        amount: payload.amount,
-        method: payload.method,
-        comment: payload.comment ?? null,
-      });
-
-      const created = res.data[0];
-      if (created) {
-        this.payments = [created, ...this.payments];
-      }
-
-      this.loadAll().catch(() => {});
-      return created;
     },
 
     async addContract(payload: {
@@ -85,14 +85,31 @@ export const usePaymentsStore = defineStore("payments", {
       amount: number;
       signed_date: string;
     }) {
-      if (!payload.client_name.trim()) throw new Error("Клиент обязателен");
+      const name = payload.client_name.trim();
+      if (!name) throw new Error("Клиент обязателен");
+
+      const orgRegex = /^(ООО|ИП|АО|ПАО|ЗАО|ОАО|ФГУП|ГУП|МУП|НКО|АНО|ТСЖ)\s+/i;
+      if (!orgRegex.test(name)) {
+        throw new Error(
+          'Название должно начинаться с организационной формы (ООО, ИП, АО и т.д.) и пробела. Например: ООО "Ромашка"',
+        );
+      }
+
+      const exists = this.contracts.some(
+        (c) => c.client_name.toLowerCase() === name.toLowerCase(),
+      );
+      if (exists) {
+        throw new Error(
+          "Клиент с таким названием уже существует. Укажите уникальное название (например, добавьте № филиала).",
+        );
+      }
+
       if (!Number.isFinite(payload.amount) || payload.amount <= 0)
         throw new Error("Сумма договора должна быть положительной");
 
       try {
-        // ОТПРАВЛЯЕМ СТРОГО ТОЛЬКО ЭТИ ПОЛЯ
         const res = await api.post<Contract[]>("/contracts", {
-          client_name: payload.client_name,
+          client_name: name,
           amount: payload.amount,
           signed_date: payload.signed_date,
           status: "active",
@@ -115,6 +132,11 @@ export const usePaymentsStore = defineStore("payments", {
           if (details.includes("amount")) {
             throw new Error("Сумма договора должна быть положительной");
           }
+          if (details.includes("client_name")) {
+            throw new Error(
+              "Некорректное название клиента. Оно должно начинаться с ООО, ИП, АО и т.д.",
+            );
+          }
           throw new Error(details || message || "Некорректные данные договора");
         }
         throw new Error(
@@ -124,6 +146,22 @@ export const usePaymentsStore = defineStore("payments", {
     },
 
     async closeContract(id: number) {
+      const contract = this.contracts.find((c) => c.id === id);
+      if (contract) {
+        const paid = this.payments
+          .filter((p) => p.contract_id === id)
+          .reduce((s, p) => s + Number(p.amount), 0);
+
+        const debt = Number(contract.amount) - paid;
+        if (debt > 0) {
+          throw new Error(
+            `Невозможно закрыть договор. Остаток к оплате: ${debt.toLocaleString(
+              "ru-RU",
+            )} ₽. Сначала погасите задолженность.`,
+          );
+        }
+      }
+
       try {
         const res = await api.patch<Contract[]>(`/contracts?id=eq.${id}`, {
           status: "closed",
